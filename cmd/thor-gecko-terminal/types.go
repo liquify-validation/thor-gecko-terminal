@@ -134,6 +134,7 @@ var coinGeckoMapping = map[string]string{
 	"GAIA.ATOM": "cosmos",
 	"XRP.XRP":   "ripple",
 	"TRON.TRX":  "tron",
+	"SOL.SOL":   "solana",
 
 	// BSC assets
 	"BSC.BNB": "binancecoin",
@@ -188,7 +189,8 @@ var assetNames = map[string]string{
 	"ETH.ETH":   "Ethereum",
 	"AVAX.AVAX": "Avalanche",
 	"BNB.BNB":   "Binance Coin",
-	"ATOM.ATOM": "Cosmos",
+	"GAIA.ATOM": "Cosmos",
+	"SOL.SOL":   "Solana",
 	"DOGE.DOGE": "Dogecoin",
 	"LTC.LTC":   "Litecoin",
 	"BCH.BCH":   "Bitcoin Cash",
