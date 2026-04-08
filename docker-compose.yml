@@ -1,0 +1,32 @@
+services:
+  gecko-terminal:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "1323:1323"
+    environment:
+      THORNODE_API: "https://gateway.liquify.com/chain/thorchain_api/"
+      MIDGARD_DSN: "host=midgard-db port=5432 user=midgard dbname=midgard password=password sslmode=disable"
+    depends_on:
+      midgard-db:
+        condition: service_healthy
+
+  midgard-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: midgard
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: midgard
+    volumes:
+      - midgard-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U midgard"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  midgard-data:
