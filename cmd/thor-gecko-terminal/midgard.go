@@ -84,8 +84,8 @@ func queryEvents(ctx context.Context, fromBlock, toBlock int64) ([]interface{}, 
 func resolveBlockTimestamps(ctx context.Context, fromBlock, toBlock int64) (int64, int64, error) {
 	query := `
 		SELECT
-			(SELECT timestamp FROM block_log WHERE height = $1) AS start_ts,
-			(SELECT timestamp FROM block_log WHERE height = $2) AS end_ts
+			(SELECT timestamp FROM midgard.block_log WHERE height = $1) AS start_ts,
+			(SELECT timestamp FROM midgard.block_log WHERE height = $2) AS end_ts
 	`
 	var startTs, endTs sql.NullInt64
 	err := midgardDB.QueryRowContext(ctx, query, fromBlock, toBlock).Scan(&startTs, &endTs)
@@ -323,7 +323,7 @@ func assembleEvents(allEvents []rawEvent, blockEvents map[int64][]int, depthLook
 	}
 	sort.Slice(sortedBlocks, func(i, j int) bool { return sortedBlocks[i] < sortedBlocks[j] })
 
-	var events []interface{}
+	events := make([]interface{}, 0)
 
 	for _, blockTs := range sortedBlocks {
 		indices := blockEvents[blockTs]
