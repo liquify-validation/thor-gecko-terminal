@@ -1,8 +1,13 @@
-# GeckoTerminal THORChain Integration API
+# THORChain DEX Integration API
 
-A Go service that implements the [GeckoTerminal DEX Integration API](https://docs.google.com/document/d/1ufjAJUa6rGO9PBGJGwfBMn-XMk9NE0ow3_iMYrS3drk/edit?tab=t.0) for THORChain, enabling GeckoTerminal to track real-time and historical swap, liquidity, and pricing data.
+A Go service that exposes THORChain's swap, liquidity, and pricing data through two industry-standard APIs:
+
+- **[GeckoTerminal DEX Integration](https://docs.google.com/document/d/1ufjAJUa6rGO9PBGJGwfBMn-XMk9NE0ow3_iMYrS3drk/edit?tab=t.0)** — block, asset, pair, and event endpoints used by GeckoTerminal's indexer
+- **[CoinMarketCap Ideal API](https://docs.google.com/document/d/1S4urpzUnO2t7DmS_1dc4EL4tgnnbTObPYXvDeBnukCg/)** — spot summary/ticker/trades plus DEX subgraph-style swaps used by CMC
 
 ## Endpoints
+
+### GeckoTerminal
 
 | Endpoint | Description |
 |----------|-------------|
@@ -11,23 +16,37 @@ A Go service that implements the [GeckoTerminal DEX Integration API](https://doc
 | `GET /thorchain/geckoterminal/pair?id=:id` | Trading pair info (RUNE + asset, fees) |
 | `GET /thorchain/geckoterminal/events?fromBlock=:n&toBlock=:n` | Swap and liquidity events for a block range |
 
+### CoinMarketCap
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /thorchain/cmc/summary` | Overview of every market with 24h volume, last price, depth |
+| `GET /thorchain/cmc/assets` | Asset metadata (contract address, explorer link, fees) keyed by symbol |
+| `GET /thorchain/cmc/ticker` | Compact 24h pricing/volume map keyed by trading pair |
+| `GET /thorchain/cmc/trades?market_pair=RUNE_BTC` | Recent swap trades for a market pair |
+| `GET /thorchain/cmc/swaps?limit=100` | Recent swaps in DEX subgraph (C2) format |
+
+Trading pairs use the format `RUNE_<symbol>` (e.g. `RUNE_BTC`, `RUNE_ETH`). When a symbol exists on multiple chains (e.g. USDC on ETH, BSC, AVAX, BASE), the chain is appended to disambiguate: `RUNE_USDC-ETH`, `RUNE_USDC-BSC`, etc.
+
 ## Architecture
 
-- **THORNode cache** — Polls THORNode for pool, mimir, and vault data on intervals
+- **THORNode cache** — Polls THORNode for pool, mimir, and vault data
+- **Midgard cache** — Polls Midgard's `/v2/pools` for 24h volume and price data
 - **Midgard DB** — Queries a Midgard PostgreSQL database for historical block, swap, and liquidity events
 - **Event processing** — Parallel queries with in-memory pool depth lookups via binary search
 
 ## Prerequisites
 
 - Go 1.24+
-- Access to a [Midgard](https://gitlab.com/thorchain/midgard) PostgreSQL database
-- Network access to a THORNode API
+- Access to a [Midgard](https://gitlab.com/thorchain/midgard) PostgreSQL database (for `/events` and `/trades`)
+- Network access to a THORNode API and Midgard HTTP API
 
 ## Configuration
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `THORNODE_API` | `https://gateway.liquify.com/chain/thorchain_api/` | THORNode API base URL |
+| `MIDGARD_API` | `https://gateway.liquify.com/chain/thorchain_midgard` | Midgard HTTP API base URL |
 | `MIDGARD_DSN` | `host=localhost port=5432 user=midgard dbname=midgard password=password sslmode=disable` | Midgard PostgreSQL connection string |
 
 ## Run locally
@@ -59,23 +78,26 @@ Run the test suite (no database required):
 go test ./cmd/thor-gecko-terminal/ -v
 ```
 
-Tests cover all four endpoints and the core transform logic:
+Test files:
 
-- **Handler tests** (`handlers_test.go`) — HTTP-level tests for `/latest-block`, `/asset`, `/pair`, and `/events` including error cases (missing params, empty cache, no DB), RUNE synthetic responses, known/unknown pools, contract address parsing, and fee defaults
-- **Event tests** (`events_test.go`) — Unit tests for swap/liquidity transforms, price calculation with reserve fallback, `e8ToDecimal` conversion, `parseAssetID`, and `findPoolDepth` binary search
+- **`handlers_test.go`** — GeckoTerminal endpoint tests (latest-block, asset, pair, events)
+- **`events_test.go`** — Event transform and helper tests (swap direction, price fallback, e8 conversion, asset parsing, pool depth binary search)
+- **`cmc_test.go`** — CMC endpoint tests (summary, assets, ticker, trades, swaps) plus trading-pair collision handling and contract URL resolution
 
 ## Project structure
 
 ```
 cmd/thor-gecko-terminal/
   main.go            — Server startup and route registration
-  types.go           — API response types, CoinGecko/asset mappings
-  handlers.go        — HTTP handler functions
-  handlers_test.go   — Endpoint tests
+  cache.go           — THORNode and Midgard data caches
+  types.go           — GeckoTerminal types, CoinGecko/asset mappings
+  handlers.go        — GeckoTerminal HTTP handlers
+  events.go          — GeckoTerminal event transformation and pricing
   midgard.go         — Database init, event queries, pool depth lookups
-  events.go          — Event transformation and price calculation
-  events_test.go     — Transform and helper tests
-  cache.go           — THORNode data cache (pools, mimir, vaults)
+  cmc_types.go       — CoinMarketCap API response types
+  cmc.go             — CMC helpers (pair IDs, asset parsing, explorer URLs)
+  cmc_handlers.go    — CoinMarketCap HTTP handlers
+  *_test.go          — Test files
 Dockerfile           — Multi-stage build
 docker-compose.yml
 ```
