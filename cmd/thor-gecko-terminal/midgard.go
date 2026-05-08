@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -379,4 +380,138 @@ func assembleEvents(allEvents []rawEvent, blockEvents map[int64][]int, depthLook
 	}
 
 	return events, nil
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+// CMC trade/swap queries
+////////////////////////////////////////////////////////////////////////////////////////
+
+// queryRecentTrades returns the most recent N swap trades for a given pool
+// formatted as CMC trades. RUNE is the base currency, the pool asset is the quote.
+func queryRecentTrades(ctx context.Context, asset string, limit int) ([]CMCTrade, error) {
+	query := `
+		SELECT s.tx, s.from_asset, s.from_e8, s.to_asset, s.to_e8, s.block_timestamp
+		FROM midgard.swap_events s
+		WHERE s.pool = $1
+		ORDER BY s.block_timestamp DESC, s.event_id DESC
+		LIMIT $2
+	`
+	rows, err := midgardDB.QueryContext(ctx, query, asset, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query trades: %w", err)
+	}
+	defer rows.Close()
+
+	trades := make([]CMCTrade, 0, limit)
+	for rows.Next() {
+		var (
+			txID       string
+			fromAsset  string
+			fromE8     int64
+			toAsset    string
+			toE8       int64
+			blockNanos int64
+		)
+		if err := rows.Scan(&txID, &fromAsset, &fromE8, &toAsset, &toE8, &blockNanos); err != nil {
+			return nil, fmt.Errorf("scan trade: %w", err)
+		}
+
+		trade := buildTradeEntry(txID, fromAsset, fromE8, toAsset, toE8, blockNanos)
+		if trade != nil {
+			trades = append(trades, *trade)
+		}
+	}
+	return trades, nil
+}
+
+// buildTradeEntry converts a single swap row into a CMCTrade. Returns nil if
+// the swap doesn't involve RUNE (which should never happen in practice).
+//
+// RUNE is the base. So a RUNE→Asset swap is a "buy" of asset (sell of RUNE),
+// and an Asset→RUNE swap is a "sell" of asset (buy of RUNE). The CMC `type`
+// field describes the order that was matched on a traditional book — which is
+// not directly applicable to AMMs, but we use the convention that Asset→RUNE
+// = "buy" (RUNE was bought) and RUNE→Asset = "sell" (RUNE was sold).
+func buildTradeEntry(txID, fromAsset string, fromE8 int64, toAsset string, toE8 int64, blockNanos int64) *CMCTrade {
+	timestampMs := blockNanos / 1_000_000
+
+	switch {
+	case fromAsset == "THOR.RUNE":
+		// Sell RUNE for asset.
+		baseVol := float64(fromE8) / 1e8
+		quoteVol := float64(toE8) / 1e8
+		if baseVol == 0 {
+			return nil
+		}
+		return &CMCTrade{
+			TradeID:     txID,
+			Price:       quoteVol / baseVol,
+			BaseVolume:  baseVol,
+			QuoteVolume: quoteVol,
+			Timestamp:   timestampMs,
+			Type:        "sell",
+		}
+	case toAsset == "THOR.RUNE":
+		// Buy RUNE with asset.
+		baseVol := float64(toE8) / 1e8
+		quoteVol := float64(fromE8) / 1e8
+		if baseVol == 0 {
+			return nil
+		}
+		return &CMCTrade{
+			TradeID:     txID,
+			Price:       quoteVol / baseVol,
+			BaseVolume:  baseVol,
+			QuoteVolume: quoteVol,
+			Timestamp:   timestampMs,
+			Type:        "buy",
+		}
+	}
+	return nil
+}
+
+// queryRecentSwaps returns the most recent N swaps in subgraph-style format
+// (DEX section C2). Includes asset symbol and decimals.
+func queryRecentSwaps(ctx context.Context, limit int) ([]CMCSwap, error) {
+	query := `
+		SELECT s.tx, s.from_asset, s.from_e8, s.to_asset, s.to_e8, s.block_timestamp
+		FROM midgard.swap_events s
+		ORDER BY s.block_timestamp DESC, s.event_id DESC
+		LIMIT $1
+	`
+	rows, err := midgardDB.QueryContext(ctx, query, limit)
+	if err != nil {
+		return nil, fmt.Errorf("query swaps: %w", err)
+	}
+	defer rows.Close()
+
+	swaps := make([]CMCSwap, 0, limit)
+	for rows.Next() {
+		var (
+			txID       string
+			fromAsset  string
+			fromE8     int64
+			toAsset    string
+			toE8       int64
+			blockNanos int64
+		)
+		if err := rows.Scan(&txID, &fromAsset, &fromE8, &toAsset, &toE8, &blockNanos); err != nil {
+			return nil, fmt.Errorf("scan swap: %w", err)
+		}
+
+		_, fromSym := extractChainSymbol(fromAsset)
+		_, toSym := extractChainSymbol(toAsset)
+
+		swaps = append(swaps, CMCSwap{
+			ID:         txID,
+			FromAmount: strconv.FormatInt(fromE8, 10),
+			ToAmount:   strconv.FormatInt(toE8, 10),
+			Timestamp:  blockNanos / 1_000_000_000,
+			Pair: CMCSwapPair{
+				FromToken: CMCSwapToken{Decimals: 8, Symbol: fromSym},
+				ToToken:   CMCSwapToken{Decimals: 8, Symbol: toSym},
+			},
+		})
+	}
+	return swaps, nil
 }

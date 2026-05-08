@@ -4,13 +4,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
 	openapi "gitlab.com/thorchain/thornode/v3/openapi/gen"
-	"gitlab.com/thorchain/thornode/v3/x/thorchain/types"
 )
+
+// thornodeAPIBase is the trimmed base URL for the configured THORNode HTTP API.
+// Set by InitCache. Used to build verification URLs in handler responses.
+var thornodeAPIBase string
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // Config
@@ -20,18 +24,46 @@ const (
 	ThornodeThorchainVaultsAsgardInterval = 60 * time.Second
 	ThornodeThorchainMimirInterval        = 10 * time.Second
 	ThornodeThorchainPoolsInterval        = 5 * time.Minute
+	MidgardPoolsInterval                  = 60 * time.Second
 )
 
 ////////////////////////////////////////////////////////////////////////////////////////
 // <thornode>/thorchain/vaults/asgard
 ////////////////////////////////////////////////////////////////////////////////////////
 
+// AsgardVault mirrors the relevant fields of a single vault entry returned by
+// THORNode's /thorchain/vaults/asgard endpoint. The protobuf-generated
+// QueryVaultResponse can't be JSON-decoded directly because nested types
+// (Coin.Asset, Coin.Amount) use wire formats that don't match the HTTP API.
+type AsgardVault struct {
+	BlockHeight int64             `json:"block_height"`
+	PubKey      string            `json:"pub_key"`
+	Coins       []AsgardCoin      `json:"coins"`
+	Type        string            `json:"type"`
+	Status      string            `json:"status"`
+	StatusSince int64             `json:"status_since"`
+	Addresses   []AsgardVaultAddr `json:"addresses"`
+}
+
+// AsgardCoin is a single asset balance held by a vault.
+type AsgardCoin struct {
+	Asset    string `json:"asset"`              // e.g. "BTC.BTC", "ETH.USDT-0X..."
+	Amount   string `json:"amount"`             // 1e8-scaled decimal as string
+	Decimals int    `json:"decimals,omitempty"` // native decimals (optional)
+}
+
+// AsgardVaultAddr is a vault's wallet address on a particular chain.
+type AsgardVaultAddr struct {
+	Chain   string `json:"chain"`
+	Address string `json:"address"`
+}
+
 var (
-	thornodeThorchainVaultsAsgard   []types.QueryVaultResponse
+	thornodeThorchainVaultsAsgard   []AsgardVault
 	thornodeThorchainVaultsAsgardMu sync.Mutex
 )
 
-func CachedThornodeThorchainVaultsAsgard() []types.QueryVaultResponse {
+func CachedThornodeThorchainVaultsAsgard() []AsgardVault {
 	return thornodeThorchainVaultsAsgard
 }
 
@@ -63,6 +95,38 @@ func CachedThornodeThorchainPools() []openapi.Pool {
 	// Return copy to prevent external modification
 	pools := make([]openapi.Pool, len(thornodeThorchainPools))
 	copy(pools, thornodeThorchainPools)
+	return pools
+}
+
+////////////////////////////////////////////////////////////////////////////////////////
+// <midgard>/v2/pools
+////////////////////////////////////////////////////////////////////////////////////////
+
+// MidgardPool mirrors the relevant fields from Midgard's /v2/pools endpoint.
+type MidgardPool struct {
+	Asset                string `json:"asset"`
+	Status               string `json:"status"`
+	AssetDepth           string `json:"assetDepth"`
+	RuneDepth            string `json:"runeDepth"`
+	AssetPrice           string `json:"assetPrice"`
+	AssetPriceUSD        string `json:"assetPriceUSD"`
+	Volume24h            string `json:"volume24h"`
+	LiquidityInUSD       string `json:"liquidityInUSD"`
+	NativeDecimal        string `json:"nativeDecimal"`
+	AnnualPercentageRate string `json:"annualPercentageRate"`
+	PoolAPY              string `json:"poolAPY"`
+}
+
+var (
+	midgardPools   []MidgardPool
+	midgardPoolsMu sync.RWMutex
+)
+
+func CachedMidgardPools() []MidgardPool {
+	midgardPoolsMu.RLock()
+	defer midgardPoolsMu.RUnlock()
+	pools := make([]MidgardPool, len(midgardPools))
+	copy(pools, midgardPools)
 	return pools
 }
 
@@ -155,7 +219,9 @@ func startCacheRW(url string, response any, mu *sync.RWMutex, interval time.Dura
 	}()
 }
 
-func InitCache(thornodeAPI string) {
+func InitCache(thornodeAPI, midgardAPI string) {
+	thornodeAPIBase = strings.TrimRight(thornodeAPI, "/")
+
 	startCache(
 		// trunk-ignore(gitleaks/generic-api-key)
 		fmt.Sprintf("%s/%s", thornodeAPI, "thorchain/vaults/asgard"),
@@ -176,5 +242,12 @@ func InitCache(thornodeAPI string) {
 		&thornodeThorchainPools,
 		&thornodeThorchainPoolsMu,
 		ThornodeThorchainPoolsInterval,
+	)
+
+	startCacheRW(
+		fmt.Sprintf("%s/%s", midgardAPI, "v2/pools"),
+		&midgardPools,
+		&midgardPoolsMu,
+		MidgardPoolsInterval,
 	)
 }
