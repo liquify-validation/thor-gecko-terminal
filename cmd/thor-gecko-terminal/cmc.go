@@ -117,3 +117,40 @@ func contractAddressURL(chain, contract string) string {
 	}
 	return ""
 }
+
+// walletAddressURL returns a block-explorer URL for a wallet/account address
+// on the given chain. Used for proof-of-reserves vault addresses.
+func walletAddressURL(chain, address string) string {
+	if address == "" {
+		return ""
+	}
+	switch chain {
+	case "BTC":
+		return "https://mempool.space/address/" + address
+	case "BCH":
+		return "https://blockchair.com/bitcoin-cash/address/" + address
+	case "LTC":
+		return "https://blockchair.com/litecoin/address/" + address
+	case "DOGE":
+		return "https://blockchair.com/dogecoin/address/" + address
+	case "ETH":
+		return "https://etherscan.io/address/" + address
+	case "BSC":
+		return "https://bscscan.com/address/" + address
+	case "AVAX":
+		return "https://snowtrace.io/address/" + address
+	case "BASE":
+		return "https://basescan.org/address/" + address
+	case "TRON":
+		return "https://tronscan.org/#/address/" + address
+	case "GAIA":
+		return "https://www.mintscan.io/cosmos/address/" + address
+	case "XRP":
+		return "https://xrpscan.com/account/" + address
+	case "SOL":
+		return "https://solscan.io/account/" + address
+	case "THOR":
+		return "https://runescan.io/address/" + address
+	}
+	return ""
+}

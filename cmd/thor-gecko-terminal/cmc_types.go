@@ -70,3 +70,57 @@ type CMCSwapToken struct {
 	Decimals int    `json:"decimals"`
 	Symbol   string `json:"symbol"`
 }
+
+// CMCProofOfReserves — /proof-of-reserves response.
+//
+// THORChain custodies user funds in on-chain Asgard vaults — multi-signature
+// wallets controlled by the active validator set. This endpoint aggregates the
+// balances of all active Asgard vaults per asset and lists every vault address
+// with its block-explorer URL so reserves can be verified directly on-chain.
+type CMCProofOfReserves struct {
+	Network         string         `json:"network"`
+	BlockHeight     int64          `json:"block_height"`
+	Timestamp       int64          `json:"timestamp"`
+	VerificationURL string         `json:"verification_url"`
+	Reserves        []CMCReserve   `json:"reserves"`
+}
+
+// CMCReserve is a per-asset summary of vault balances.
+type CMCReserve struct {
+	Asset          string             `json:"asset"`
+	Symbol         string             `json:"symbol"`
+	Chain          string             `json:"chain"`
+	TotalReserve   string             `json:"total_reserve"`
+	VaultAddresses []CMCVaultAddress  `json:"vault_addresses"`
+}
+
+// CMCVaultAddress lists a single vault's holding of one asset.
+type CMCVaultAddress struct {
+	Address     string `json:"address"`
+	Balance     string `json:"balance"`
+	ExplorerURL string `json:"explorer_url,omitempty"`
+}
+
+// CMCProofOfLiabilities — /proof-of-liabilities response.
+//
+// On THORChain, liabilities are claims against pool reserves: liquidity-provider
+// units, savers deposits, and synthetic asset supply. For a solvent pool, vault
+// balance >= pool depth + savers depth + synth supply. All values are publicly
+// visible on-chain via Midgard and THORNode.
+type CMCProofOfLiabilities struct {
+	Network     string           `json:"network"`
+	BlockHeight int64            `json:"block_height"`
+	Timestamp   int64            `json:"timestamp"`
+	Liabilities []CMCLiability   `json:"liabilities"`
+}
+
+// CMCLiability is a per-asset summary of outstanding claims.
+type CMCLiability struct {
+	Asset            string `json:"asset"`
+	Symbol           string `json:"symbol"`
+	Chain            string `json:"chain"`
+	PoolDepth        string `json:"pool_depth"`
+	SaversDepth      string `json:"savers_depth"`
+	SynthSupply      string `json:"synth_supply"`
+	TotalLiabilities string `json:"total_liabilities"`
+}

@@ -35,6 +35,8 @@ func main() {
 	e.GET("/thorchain/cmc/ticker", CMCTicker)
 	e.GET("/thorchain/cmc/trades", CMCTrades)
 	e.GET("/thorchain/cmc/swaps", CMCSwaps)
+	e.GET("/thorchain/cmc/proof-of-reserves", CMCProofOfReservesHandler)
+	e.GET("/thorchain/cmc/proof-of-liabilities", CMCProofOfLiabilitiesHandler)
 
 	e.Logger.Fatal(e.Start(":1323"))
 }

@@ -25,8 +25,14 @@ A Go service that exposes THORChain's swap, liquidity, and pricing data through 
 | `GET /thorchain/cmc/ticker` | Compact 24h pricing/volume map keyed by trading pair |
 | `GET /thorchain/cmc/trades?market_pair=RUNE_BTC` | Recent swap trades for a market pair |
 | `GET /thorchain/cmc/swaps?limit=100` | Recent swaps in DEX subgraph (C2) format |
+| `GET /thorchain/cmc/proof-of-reserves` | Per-asset Asgard vault balances with on-chain explorer links (CMC Annex J) |
+| `GET /thorchain/cmc/proof-of-liabilities` | Per-asset claims (pool depth, savers, synth supply) outstanding against vault reserves (CMC Annex K) |
 
 Trading pairs use the format `RUNE_<symbol>` (e.g. `RUNE_BTC`, `RUNE_ETH`). When a symbol exists on multiple chains (e.g. USDC on ETH, BSC, AVAX, BASE), the chain is appended to disambiguate: `RUNE_USDC-ETH`, `RUNE_USDC-BSC`, etc.
+
+#### A note on Proof of Reserves
+
+THORChain is non-custodial — there is no centralized treasury. All reserves are held in on-chain Asgard vaults (multi-signature wallets controlled by the active validator set), and all liabilities (LP units, savers, synth supply) are recorded on-chain. The `/proof-of-reserves` endpoint exposes vault balances per asset along with the actual block-explorer URLs for every vault address, so reserves can be independently audited at any block height. For a solvent network, vault balance ≥ pool depth + savers + synth supply for each asset.
 
 ## Architecture
 
@@ -83,6 +89,7 @@ Test files:
 - **`handlers_test.go`** — GeckoTerminal endpoint tests (latest-block, asset, pair, events)
 - **`events_test.go`** — Event transform and helper tests (swap direction, price fallback, e8 conversion, asset parsing, pool depth binary search)
 - **`cmc_test.go`** — CMC endpoint tests (summary, assets, ticker, trades, swaps) plus trading-pair collision handling and contract URL resolution
+- **`cmc_proof_test.go`** — Proof of Reserves / Proof of Liabilities tests (vault aggregation, synth exclusion, claims math, wallet explorer URLs)
 
 ## Project structure
 
@@ -96,7 +103,8 @@ cmd/thor-gecko-terminal/
   midgard.go         — Database init, event queries, pool depth lookups
   cmc_types.go       — CoinMarketCap API response types
   cmc.go             — CMC helpers (pair IDs, asset parsing, explorer URLs)
-  cmc_handlers.go    — CoinMarketCap HTTP handlers
+  cmc_handlers.go    — CoinMarketCap HTTP handlers (summary, assets, ticker, trades, swaps)
+  cmc_proof.go       — Proof of Reserves / Proof of Liabilities handlers
   *_test.go          — Test files
 Dockerfile           — Multi-stage build
 docker-compose.yml
