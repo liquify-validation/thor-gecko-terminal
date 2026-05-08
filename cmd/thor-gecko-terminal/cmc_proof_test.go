@@ -5,13 +5,10 @@ import (
 	"net/http"
 	"testing"
 
-	"cosmossdk.io/math"
-	"gitlab.com/thorchain/thornode/v3/common"
 	openapi "gitlab.com/thorchain/thornode/v3/openapi/gen"
-	"gitlab.com/thorchain/thornode/v3/x/thorchain/types"
 )
 
-func setTestVaults(vaults []types.QueryVaultResponse) {
+func setTestVaults(vaults []AsgardVault) {
 	thornodeThorchainVaultsAsgardMu.Lock()
 	defer thornodeThorchainVaultsAsgardMu.Unlock()
 	thornodeThorchainVaultsAsgard = vaults
@@ -21,30 +18,6 @@ func setTestThornodePools(pools []openapi.Pool) {
 	thornodeThorchainPoolsMu.Lock()
 	defer thornodeThorchainPoolsMu.Unlock()
 	thornodeThorchainPools = pools
-}
-
-func makeTestVault(status string, height int64, addresses map[string]string, coins []common.Coin) types.QueryVaultResponse {
-	addrPtrs := make([]*types.VaultAddress, 0, len(addresses))
-	for chain, addr := range addresses {
-		addrPtrs = append(addrPtrs, &types.VaultAddress{Chain: chain, Address: addr})
-	}
-	return types.QueryVaultResponse{
-		BlockHeight: height,
-		Status:      status,
-		Coins:       coins,
-		Addresses:   addrPtrs,
-	}
-}
-
-func makeCoin(chain, ticker string, amount uint64) common.Coin {
-	return common.Coin{
-		Asset: common.Asset{
-			Chain:  common.Chain(chain),
-			Symbol: common.Symbol(ticker),
-			Ticker: common.Ticker(ticker),
-		},
-		Amount: math.NewUint(amount),
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -63,27 +36,37 @@ func TestProofOfReserves_NoData(t *testing.T) {
 }
 
 func TestProofOfReserves_AggregatesAcrossVaults(t *testing.T) {
-	setTestVaults([]types.QueryVaultResponse{
-		makeTestVault("active", 100,
-			map[string]string{"BTC": "bc1qaaa", "ETH": "0xaaa"},
-			[]common.Coin{
-				makeCoin("BTC", "BTC", 100_000_000),       // 1 BTC
-				makeCoin("ETH", "ETH", 5_000_000_000),     // 50 ETH
+	setTestVaults([]AsgardVault{
+		{
+			BlockHeight: 100,
+			Status:      "ActiveVault",
+			Addresses: []AsgardVaultAddr{
+				{Chain: "BTC", Address: "bc1qaaa"},
+				{Chain: "ETH", Address: "0xaaa"},
 			},
-		),
-		makeTestVault("active", 101,
-			map[string]string{"BTC": "bc1qbbb", "ETH": "0xbbb"},
-			[]common.Coin{
-				makeCoin("BTC", "BTC", 200_000_000),       // 2 BTC
-				makeCoin("ETH", "ETH", 1_000_000_000),     // 10 ETH
+			Coins: []AsgardCoin{
+				{Asset: "BTC.BTC", Amount: "100000000"},  // 1 BTC
+				{Asset: "ETH.ETH", Amount: "5000000000"}, // 50 ETH
 			},
-		),
-		makeTestVault("retiring", 99,
-			map[string]string{"BTC": "bc1qccc"},
-			[]common.Coin{
-				makeCoin("BTC", "BTC", 999_000_000), // should be excluded
+		},
+		{
+			BlockHeight: 101,
+			Status:      "ActiveVault",
+			Addresses: []AsgardVaultAddr{
+				{Chain: "BTC", Address: "bc1qbbb"},
+				{Chain: "ETH", Address: "0xbbb"},
 			},
-		),
+			Coins: []AsgardCoin{
+				{Asset: "BTC.BTC", Amount: "200000000"},  // 2 BTC
+				{Asset: "ETH.ETH", Amount: "1000000000"}, // 10 ETH
+			},
+		},
+		{
+			BlockHeight: 99,
+			Status:      "RetiringVault",
+			Addresses:   []AsgardVaultAddr{{Chain: "BTC", Address: "bc1qccc"}},
+			Coins:       []AsgardCoin{{Asset: "BTC.BTC", Amount: "999000000"}}, // excluded
+		},
 	})
 
 	c, rec := newTestContext(http.MethodGet, "/thorchain/cmc/proof-of-reserves")
@@ -106,7 +89,6 @@ func TestProofOfReserves_AggregatesAcrossVaults(t *testing.T) {
 		t.Errorf("expected network thorchain, got %s", resp.Network)
 	}
 
-	// Find BTC reserve
 	var btc *CMCReserve
 	for i := range resp.Reserves {
 		if resp.Reserves[i].Symbol == "BTC" {
@@ -130,21 +112,14 @@ func TestProofOfReserves_AggregatesAcrossVaults(t *testing.T) {
 }
 
 func TestProofOfReserves_SkipsSyntheticAssets(t *testing.T) {
-	setTestVaults([]types.QueryVaultResponse{
+	setTestVaults([]AsgardVault{
 		{
 			BlockHeight: 100,
-			Status:      "active",
-			Coins: []common.Coin{
-				makeCoin("BTC", "BTC", 100_000_000),
-				{
-					Asset: common.Asset{
-						Chain:  "BTC",
-						Symbol: "BTC",
-						Ticker: "BTC",
-						Synth:  true, // synthetic — should be excluded
-					},
-					Amount: math.NewUint(50_000_000),
-				},
+			Status:      "ActiveVault",
+			Coins: []AsgardCoin{
+				{Asset: "BTC.BTC", Amount: "100000000"}, // L1
+				{Asset: "BTC/BTC", Amount: "50000000"},  // synth — should be excluded
+				{Asset: "BTC~BTC", Amount: "25000000"},  // trade — should be excluded
 			},
 		},
 	})
@@ -159,12 +134,37 @@ func TestProofOfReserves_SkipsSyntheticAssets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Should only have the L1 BTC entry, synth excluded.
 	if len(resp.Reserves) != 1 {
-		t.Fatalf("expected 1 reserve (synth excluded), got %d", len(resp.Reserves))
+		t.Fatalf("expected 1 reserve (derivatives excluded), got %d", len(resp.Reserves))
 	}
 	if resp.Reserves[0].TotalReserve != "1.00000000" {
-		t.Errorf("expected synth-only excluded, got total %s", resp.Reserves[0].TotalReserve)
+		t.Errorf("expected only L1 BTC counted, got total %s", resp.Reserves[0].TotalReserve)
+	}
+}
+
+func TestProofOfReserves_VerificationURLUsesConfiguredAPI(t *testing.T) {
+	thornodeAPIBase = "https://gateway.liquify.com/chain/thorchain_api"
+	setTestVaults([]AsgardVault{
+		{
+			BlockHeight: 100,
+			Status:      "ActiveVault",
+			Coins:       []AsgardCoin{{Asset: "BTC.BTC", Amount: "100000000"}},
+		},
+	})
+
+	c, rec := newTestContext(http.MethodGet, "/thorchain/cmc/proof-of-reserves")
+	if err := CMCProofOfReservesHandler(c); err != nil {
+		t.Fatal(err)
+	}
+
+	var resp CMCProofOfReserves
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+
+	want := "https://gateway.liquify.com/chain/thorchain_api/thorchain/vaults/asgard"
+	if resp.VerificationURL != want {
+		t.Errorf("expected verification_url %s, got %s", want, resp.VerificationURL)
 	}
 }
 

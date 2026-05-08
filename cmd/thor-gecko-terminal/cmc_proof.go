@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,7 +47,7 @@ func CMCProofOfReservesHandler(c echo.Context) error {
 
 	var maxBlockHeight int64
 	for _, v := range vaults {
-		if !strings.EqualFold(v.Status, "active") {
+		if !strings.EqualFold(v.Status, "ActiveVault") {
 			continue
 		}
 		if v.BlockHeight > maxBlockHeight {
@@ -56,31 +57,30 @@ func CMCProofOfReservesHandler(c echo.Context) error {
 		// Build chain -> address lookup for this vault.
 		chainAddr := make(map[string]string, len(v.Addresses))
 		for _, a := range v.Addresses {
-			if a != nil {
-				chainAddr[a.Chain] = a.Address
-			}
+			chainAddr[a.Chain] = a.Address
 		}
 
 		for _, coin := range v.Coins {
-			// Skip synth/trade/secured derivative balances — they don't
-			// represent physical reserves of the L1 asset.
-			if coin.Asset.Synth || coin.Asset.Trade || coin.Asset.Secured {
+			// Skip synth (CHAIN/SYMBOL) and trade (CHAIN~SYMBOL) derivatives —
+			// only physical L1 reserves count toward proof-of-reserves.
+			if strings.ContainsAny(coin.Asset, "/~") {
 				continue
 			}
 
-			assetID := coin.Asset.String()
-			chain := string(coin.Asset.Chain)
-			symbol := string(coin.Asset.Ticker)
-
-			state, ok := assets[assetID]
-			if !ok {
-				state = &assetState{asset: assetID, chain: chain, symbol: symbol}
-				assets[assetID] = state
+			chain, symbol := extractChainSymbol(coin.Asset)
+			amount, err := strconv.ParseUint(coin.Amount, 10, 64)
+			if err != nil || amount == 0 {
+				continue
 			}
-			amt := coin.Amount.Uint64()
-			state.total += amt
+
+			state, ok := assets[coin.Asset]
+			if !ok {
+				state = &assetState{asset: coin.Asset, chain: chain, symbol: symbol}
+				assets[coin.Asset] = state
+			}
+			state.total += amount
 			if addr := chainAddr[chain]; addr != "" {
-				state.entries = append(state.entries, vaultEntry{address: addr, amount: amt})
+				state.entries = append(state.entries, vaultEntry{address: addr, amount: amount})
 			}
 		}
 	}
@@ -114,11 +114,13 @@ func CMCProofOfReservesHandler(c echo.Context) error {
 		})
 	}
 
+	verificationURL := thornodeAPIBase + "/thorchain/vaults/asgard"
+
 	return c.JSON(http.StatusOK, CMCProofOfReserves{
 		Network:         "thorchain",
 		BlockHeight:     maxBlockHeight,
 		Timestamp:       time.Now().Unix(),
-		VerificationURL: "https://thornode.ninerealms.com/thorchain/vaults/asgard",
+		VerificationURL: verificationURL,
 		Reserves:        reserves,
 	})
 }
