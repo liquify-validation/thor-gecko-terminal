@@ -71,6 +71,18 @@ type CMCSwapToken struct {
 	Symbol   string `json:"symbol"`
 }
 
+// CMCOrderbook — /orderbook response.
+//
+// THORChain is an AMM with no real orderbook; this is a synthesized view of
+// the constant-product bonding curve discretized into discrete price levels.
+// Each entry is [price, quantity] where price is in quote currency per base
+// and quantity is in base currency.
+type CMCOrderbook struct {
+	Timestamp int64        `json:"timestamp"`
+	Bids      [][2]float64 `json:"bids"`
+	Asks      [][2]float64 `json:"asks"`
+}
+
 // CMCProofOfReserves — /proof-of-reserves response.
 //
 // THORChain custodies user funds in on-chain Asgard vaults — multi-signature

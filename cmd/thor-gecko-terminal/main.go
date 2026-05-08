@@ -23,6 +23,10 @@ func main() {
 	e := echo.New()
 	e.Use(middleware.Gzip())
 
+	// API documentation
+	e.GET("/openapi.yaml", OpenAPISpecHandler)
+	e.GET("/docs", SwaggerUIHandler)
+
 	// GeckoTerminal endpoints
 	e.GET("/thorchain/geckoterminal/latest-block", GeckoterminalLatestBlock)
 	e.GET("/thorchain/geckoterminal/asset", GeckoterminalAsset)
@@ -35,6 +39,7 @@ func main() {
 	e.GET("/thorchain/cmc/ticker", CMCTicker)
 	e.GET("/thorchain/cmc/trades", CMCTrades)
 	e.GET("/thorchain/cmc/swaps", CMCSwaps)
+	e.GET("/thorchain/cmc/orderbook", CMCOrderbookHandler)
 	e.GET("/thorchain/cmc/proof-of-reserves", CMCProofOfReservesHandler)
 	e.GET("/thorchain/cmc/proof-of-liabilities", CMCProofOfLiabilitiesHandler)
 

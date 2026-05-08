@@ -1,0 +1,570 @@
+openapi: 3.0.3
+info:
+  title: THORChain DEX Integration API
+  description: |
+    HTTP service exposing THORChain swap, liquidity and pricing data through
+    two industry-standard API specifications:
+
+    * **GeckoTerminal DEX Integration** — block, asset, pair and event endpoints
+      consumed by GeckoTerminal's indexer.
+    * **CoinMarketCap Ideal API** — spot summary/ticker/trades plus DEX
+      subgraph-style swaps, synthesized orderbook, and Proof-of-Reserves /
+      Proof-of-Liabilities endpoints.
+
+    Trading pair identifiers use the format `RUNE_<symbol>`. When a symbol
+    exists on multiple chains (USDC on ETH/BSC/AVAX/BASE) the chain is
+    appended for disambiguation: `RUNE_USDC-ETH`, `RUNE_USDC-BSC`, etc.
+  version: "1.0.0"
+servers:
+  - url: https://api-thor.liquify.com
+    description: Production
+  - url: http://localhost:1323
+    description: Local development
+
+tags:
+  - name: GeckoTerminal
+    description: Endpoints implementing the GeckoTerminal DEX Integration spec.
+  - name: CoinMarketCap
+    description: Endpoints implementing the CoinMarketCap Ideal API spec.
+  - name: Proof
+    description: Proof-of-Reserves and Proof-of-Liabilities transparency endpoints.
+
+paths:
+  # ------------------------------------------------------------------
+  # GeckoTerminal
+  # ------------------------------------------------------------------
+  /thorchain/geckoterminal/latest-block:
+    get:
+      tags: [GeckoTerminal]
+      summary: Latest indexed block
+      description: Returns the most recent block height and unix timestamp Midgard has indexed.
+      responses:
+        "200":
+          description: Latest block
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LatestBlockResponse"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /thorchain/geckoterminal/asset:
+    get:
+      tags: [GeckoTerminal]
+      summary: Asset details
+      description: Returns name, symbol, decimals, supply and CoinGecko ID for a THORChain asset.
+      parameters:
+        - $ref: "#/components/parameters/AssetIdQuery"
+      responses:
+        "200":
+          description: Asset metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssetResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /thorchain/geckoterminal/pair:
+    get:
+      tags: [GeckoTerminal]
+      summary: Pair details
+      description: Returns trading pair info. Asset0 is always THOR.RUNE and Asset1 is the pool asset.
+      parameters:
+        - $ref: "#/components/parameters/AssetIdQuery"
+      responses:
+        "200":
+          description: Pair metadata
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PairResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+
+  /thorchain/geckoterminal/events:
+    get:
+      tags: [GeckoTerminal]
+      summary: Swap and liquidity events
+      description: Returns swap, join (add LP) and exit (remove LP) events for a block range. Range is inclusive and capped at 250 blocks per request.
+      parameters:
+        - name: fromBlock
+          in: query
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: toBlock
+          in: query
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: Events for the requested range
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventsResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  # ------------------------------------------------------------------
+  # CMC spot
+  # ------------------------------------------------------------------
+  /thorchain/cmc/summary:
+    get:
+      tags: [CoinMarketCap]
+      summary: Market summary
+      description: Overview of every available RUNE-paired market with 24h volume, last price and depth.
+      responses:
+        "200":
+          description: Market summary
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CMCSummaryEntry"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /thorchain/cmc/assets:
+    get:
+      tags: [CoinMarketCap]
+      summary: Asset directory
+      description: Asset metadata keyed by symbol. Includes RUNE, contract address and block-explorer URL for every pool asset.
+      responses:
+        "200":
+          description: Asset directory
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  $ref: "#/components/schemas/CMCAsset"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /thorchain/cmc/ticker:
+    get:
+      tags: [CoinMarketCap]
+      summary: 24h pricing/volume map
+      description: Compact 24h pricing and volume keyed by trading pair identifier.
+      responses:
+        "200":
+          description: Ticker map
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  $ref: "#/components/schemas/CMCTickerEntry"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /thorchain/cmc/trades:
+    get:
+      tags: [CoinMarketCap]
+      summary: Recent trades for a market pair
+      description: Returns the most recent 100 swaps for a market pair, formatted as buy/sell trades. Asset→RUNE swaps are reported as `buy`, RUNE→Asset as `sell`.
+      parameters:
+        - $ref: "#/components/parameters/MarketPair"
+      responses:
+        "200":
+          description: Recent trades (newest first)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CMCTrade"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /thorchain/cmc/swaps:
+    get:
+      tags: [CoinMarketCap]
+      summary: Recent swaps (DEX subgraph format)
+      description: Network-wide recent swaps in DEX section C2 (subgraph-style) format with from/to amounts and decimals.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 100
+            minimum: 1
+            maximum: 1000
+      responses:
+        "200":
+          description: Recent swaps
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  swaps:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/CMCSwap"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /thorchain/cmc/orderbook:
+    get:
+      tags: [CoinMarketCap]
+      summary: Synthesized orderbook
+      description: |
+        Level-2 orderbook synthesized from THORChain's constant-product AMM
+        bonding curve. Each entry is `[price, quantity]` where price is in
+        quote currency per base and quantity is in base currency.
+
+        Slip-based fees are not applied; real trade prices will be slightly
+        worse. The fee bps for a pool is exposed via `/thorchain/geckoterminal/pair`.
+      parameters:
+        - $ref: "#/components/parameters/MarketPair"
+        - name: depth
+          in: query
+          required: false
+          description: Total entries across both sides — typically 5, 10, 20, 50, 100, 500. Defaults to 100 (50 per side).
+          schema:
+            type: integer
+            default: 100
+        - name: level
+          in: query
+          required: false
+          description: 1 = top of book only, 2 = arranged (default), 3 = deep book.
+          schema:
+            type: integer
+            enum: [1, 2, 3]
+            default: 2
+      responses:
+        "200":
+          description: Orderbook snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CMCOrderbook"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  # ------------------------------------------------------------------
+  # CMC proof
+  # ------------------------------------------------------------------
+  /thorchain/cmc/proof-of-reserves:
+    get:
+      tags: [Proof]
+      summary: Proof of Reserves
+      description: |
+        Per-asset balances held in active Asgard vaults with block-explorer
+        URLs for every vault address. THORChain is non-custodial — these
+        balances are publicly verifiable on-chain.
+      responses:
+        "200":
+          description: Proof of Reserves snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CMCProofOfReserves"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+  /thorchain/cmc/proof-of-liabilities:
+    get:
+      tags: [Proof]
+      summary: Proof of Liabilities
+      description: |
+        Per-asset outstanding claims (pool depth, savers deposit, synth supply)
+        against vault reserves. For a solvent network, each asset's
+        `total_liabilities` ≤ the corresponding `total_reserve` from
+        `/proof-of-reserves`.
+      responses:
+        "200":
+          description: Proof of Liabilities snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CMCProofOfLiabilities"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+
+# ====================================================================
+# Components
+# ====================================================================
+components:
+  parameters:
+    AssetIdQuery:
+      name: id
+      in: query
+      required: true
+      description: THORChain asset identifier (e.g. `BTC.BTC`, `ETH.USDC-0x...`).
+      schema: { type: string }
+    MarketPair:
+      name: market_pair
+      in: query
+      required: true
+      description: CMC trading pair identifier (e.g. `RUNE_BTC`).
+      schema: { type: string }
+
+  responses:
+    BadRequest:
+      description: Invalid or missing query parameter
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ServiceUnavailable:
+      description: Upstream data source unavailable
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error: { type: string }
+
+    Block:
+      type: object
+      properties:
+        blockNumber: { type: integer, format: int64 }
+        blockTimestamp: { type: integer, format: int64, description: Unix seconds }
+        metadata:
+          type: object
+          additionalProperties: { type: string }
+
+    LatestBlockResponse:
+      type: object
+      properties:
+        block:
+          $ref: "#/components/schemas/Block"
+
+    Asset:
+      type: object
+      required: [id, name, symbol, decimals]
+      properties:
+        id: { type: string, example: "BTC.BTC" }
+        name: { type: string, example: "Bitcoin" }
+        symbol: { type: string, example: "BTC" }
+        decimals: { type: integer, example: 8 }
+        totalSupply: { type: string, nullable: true }
+        circulatingSupply: { type: string, nullable: true }
+        coinGeckoId: { type: string, nullable: true, example: "bitcoin" }
+
+    AssetResponse:
+      type: object
+      properties:
+        asset:
+          $ref: "#/components/schemas/Asset"
+
+    Pair:
+      type: object
+      required: [id, dexKey, asset0Id, asset1Id]
+      properties:
+        id: { type: string }
+        dexKey: { type: string, example: "thorchain" }
+        asset0Id: { type: string, example: "THOR.RUNE" }
+        asset1Id: { type: string, example: "BTC.BTC" }
+        feeBps: { type: integer, nullable: true }
+
+    PairResponse:
+      type: object
+      properties:
+        pair:
+          $ref: "#/components/schemas/Pair"
+
+    Reserves:
+      type: object
+      properties:
+        asset0: { type: string }
+        asset1: { type: string }
+
+    SwapEvent:
+      type: object
+      properties:
+        block: { $ref: "#/components/schemas/Block" }
+        eventType: { type: string, enum: [swap] }
+        txnId: { type: string }
+        txnIndex: { type: integer }
+        eventIndex: { type: integer }
+        maker: { type: string }
+        pairId: { type: string }
+        asset0In: { type: string, nullable: true }
+        asset1In: { type: string, nullable: true }
+        asset0Out: { type: string, nullable: true }
+        asset1Out: { type: string, nullable: true }
+        priceNative: { type: string }
+        reserves: { $ref: "#/components/schemas/Reserves" }
+
+    JoinExitEvent:
+      type: object
+      properties:
+        block: { $ref: "#/components/schemas/Block" }
+        eventType: { type: string, enum: [join, exit] }
+        txnId: { type: string }
+        txnIndex: { type: integer }
+        eventIndex: { type: integer }
+        maker: { type: string }
+        pairId: { type: string }
+        amount0: { type: string }
+        amount1: { type: string }
+        reserves: { $ref: "#/components/schemas/Reserves" }
+
+    EventsResponse:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            oneOf:
+              - $ref: "#/components/schemas/SwapEvent"
+              - $ref: "#/components/schemas/JoinExitEvent"
+
+    CMCSummaryEntry:
+      type: object
+      properties:
+        trading_pairs: { type: string, example: "RUNE_BTC" }
+        base_currency: { type: string, example: "RUNE" }
+        quote_currency: { type: string, example: "BTC" }
+        last_price: { type: number, format: double }
+        lowest_ask: { type: number, format: double }
+        highest_bid: { type: number, format: double }
+        base_volume: { type: number, format: double }
+        quote_volume: { type: number, format: double }
+        price_change_percent_24h: { type: number, format: double }
+        highest_price_24h: { type: number, format: double }
+        lowest_price_24h: { type: number, format: double }
+
+    CMCAsset:
+      type: object
+      properties:
+        name: { type: string }
+        unified_cryptoasset_id: { type: string }
+        can_withdraw: { type: string, example: "true" }
+        can_deposit: { type: string, example: "true" }
+        min_withdraw: { type: string }
+        max_withdraw: { type: string }
+        maker_fee: { type: string }
+        taker_fee: { type: string }
+        contractAddress: { type: string }
+        contractAddressUrl: { type: string, format: uri }
+
+    CMCTickerEntry:
+      type: object
+      properties:
+        base_id: { type: string }
+        quote_id: { type: string }
+        last_price: { type: number, format: double }
+        base_volume: { type: number, format: double }
+        quote_volume: { type: number, format: double }
+        isFrozen: { type: integer, enum: [0, 1] }
+
+    CMCTrade:
+      type: object
+      properties:
+        trade_id: { type: string }
+        price: { type: number, format: double }
+        base_volume: { type: number, format: double }
+        quote_volume: { type: number, format: double }
+        timestamp: { type: integer, format: int64, description: Unix milliseconds }
+        type: { type: string, enum: [buy, sell] }
+
+    CMCSwap:
+      type: object
+      properties:
+        id: { type: string }
+        fromAmount: { type: string }
+        toAmount: { type: string }
+        timestamp: { type: integer, format: int64, description: Unix seconds }
+        pair:
+          type: object
+          properties:
+            fromToken:
+              $ref: "#/components/schemas/CMCSwapToken"
+            toToken:
+              $ref: "#/components/schemas/CMCSwapToken"
+
+    CMCSwapToken:
+      type: object
+      properties:
+        decimals: { type: integer }
+        symbol: { type: string }
+
+    CMCOrderbook:
+      type: object
+      properties:
+        timestamp: { type: integer, format: int64, description: Unix milliseconds }
+        bids:
+          type: array
+          items:
+            type: array
+            items: { type: number, format: double }
+            minItems: 2
+            maxItems: 2
+          description: "Each entry is [price, quantity], sorted from best (closest to spot) to worst."
+        asks:
+          type: array
+          items:
+            type: array
+            items: { type: number, format: double }
+            minItems: 2
+            maxItems: 2
+
+    CMCVaultAddress:
+      type: object
+      properties:
+        address: { type: string }
+        balance: { type: string }
+        explorer_url: { type: string, format: uri }
+
+    CMCReserve:
+      type: object
+      properties:
+        asset: { type: string }
+        symbol: { type: string }
+        chain: { type: string }
+        total_reserve: { type: string }
+        vault_addresses:
+          type: array
+          items:
+            $ref: "#/components/schemas/CMCVaultAddress"
+
+    CMCProofOfReserves:
+      type: object
+      properties:
+        network: { type: string, example: "thorchain" }
+        block_height: { type: integer, format: int64 }
+        timestamp: { type: integer, format: int64 }
+        verification_url: { type: string, format: uri }
+        reserves:
+          type: array
+          items:
+            $ref: "#/components/schemas/CMCReserve"
+
+    CMCLiability:
+      type: object
+      properties:
+        asset: { type: string }
+        symbol: { type: string }
+        chain: { type: string }
+        pool_depth: { type: string }
+        savers_depth: { type: string }
+        synth_supply: { type: string }
+        total_liabilities: { type: string }
+
+    CMCProofOfLiabilities:
+      type: object
+      properties:
+        network: { type: string }
+        block_height: { type: integer, format: int64 }
+        timestamp: { type: integer, format: int64 }
+        liabilities:
+          type: array
+          items:
+            $ref: "#/components/schemas/CMCLiability"

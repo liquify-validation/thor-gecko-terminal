@@ -5,6 +5,17 @@ A Go service that exposes THORChain's swap, liquidity, and pricing data through 
 - **[GeckoTerminal DEX Integration](https://docs.google.com/document/d/1ufjAJUa6rGO9PBGJGwfBMn-XMk9NE0ow3_iMYrS3drk/edit?tab=t.0)** — block, asset, pair, and event endpoints used by GeckoTerminal's indexer
 - **[CoinMarketCap Ideal API](https://docs.google.com/document/d/1S4urpzUnO2t7DmS_1dc4EL4tgnnbTObPYXvDeBnukCg/)** — spot summary/ticker/trades plus DEX subgraph-style swaps used by CMC
 
+## API documentation
+
+Interactive Swagger UI is served alongside the API:
+
+| Path | Description |
+|---|---|
+| `/docs` | Swagger UI (interactive browser explorer) |
+| `/openapi.yaml` | OpenAPI 3.0 spec (machine-readable) |
+
+The spec is embedded in the binary via `go:embed`, so no separate documentation deployment is needed — it ships with the service.
+
 ## Endpoints
 
 ### GeckoTerminal
@@ -25,10 +36,22 @@ A Go service that exposes THORChain's swap, liquidity, and pricing data through 
 | `GET /thorchain/cmc/ticker` | Compact 24h pricing/volume map keyed by trading pair |
 | `GET /thorchain/cmc/trades?market_pair=RUNE_BTC` | Recent swap trades for a market pair |
 | `GET /thorchain/cmc/swaps?limit=100` | Recent swaps in DEX subgraph (C2) format |
+| `GET /thorchain/cmc/orderbook?market_pair=RUNE_BTC&depth=100&level=2` | Synthesized level-2 orderbook from the AMM bonding curve |
 | `GET /thorchain/cmc/proof-of-reserves` | Per-asset Asgard vault balances with on-chain explorer links (CMC Annex J) |
 | `GET /thorchain/cmc/proof-of-liabilities` | Per-asset claims (pool depth, savers, synth supply) outstanding against vault reserves (CMC Annex K) |
 
 Trading pairs use the format `RUNE_<symbol>` (e.g. `RUNE_BTC`, `RUNE_ETH`). When a symbol exists on multiple chains (e.g. USDC on ETH, BSC, AVAX, BASE), the chain is appended to disambiguate: `RUNE_USDC-ETH`, `RUNE_USDC-BSC`, etc.
+
+#### A note on the orderbook
+
+THORChain has no native orderbook — it's a constant-product AMM. The `/orderbook` endpoint synthesizes a level-2 book by discretizing the bonding curve at fixed percentage steps from spot price. Each level represents the *incremental* RUNE quantity you'd need to push the pool price to that level via a single trade.
+
+Query parameters:
+- `market_pair` (required): e.g. `RUNE_BTC`
+- `depth` (optional): total entries across both sides — `[5, 10, 20, 50, 100, 500]`. Defaults to 100 (50 each side).
+- `level` (optional): `1` = best bid/ask only, `2` = arranged levels (default), `3` = deep book.
+
+Note: prices reflect the pure bonding curve and don't include THORChain's slip-based fees, which are surfaced separately via `/thorchain/geckoterminal/pair`.
 
 #### A note on Proof of Reserves
 
@@ -89,6 +112,7 @@ Test files:
 - **`handlers_test.go`** — GeckoTerminal endpoint tests (latest-block, asset, pair, events)
 - **`events_test.go`** — Event transform and helper tests (swap direction, price fallback, e8 conversion, asset parsing, pool depth binary search)
 - **`cmc_test.go`** — CMC endpoint tests (summary, assets, ticker, trades, swaps) plus trading-pair collision handling and contract URL resolution
+- **`cmc_orderbook_test.go`** — Synthesized orderbook tests (bid/ask ordering, constant-product preservation, depth/level resolution, edge cases)
 - **`cmc_proof_test.go`** — Proof of Reserves / Proof of Liabilities tests (vault aggregation, synth exclusion, claims math, wallet explorer URLs)
 
 ## Project structure
@@ -104,7 +128,10 @@ cmd/thor-gecko-terminal/
   cmc_types.go       — CoinMarketCap API response types
   cmc.go             — CMC helpers (pair IDs, asset parsing, explorer URLs)
   cmc_handlers.go    — CoinMarketCap HTTP handlers (summary, assets, ticker, trades, swaps)
+  cmc_orderbook.go   — Synthesized orderbook from the AMM bonding curve
   cmc_proof.go       — Proof of Reserves / Proof of Liabilities handlers
+  docs.go            — OpenAPI spec embedding + Swagger UI handler
+  openapi.yaml       — OpenAPI 3.0 specification (embedded into the binary)
   *_test.go          — Test files
 Dockerfile           — Multi-stage build
 docker-compose.yml
